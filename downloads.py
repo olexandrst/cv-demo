@@ -39,13 +39,16 @@ URLS: dict[str, str] = {
         "https://github.com/onnx/models/raw/main/validated/vision/"
         "body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx"
     ),
+    # The Levi-Hassner gender model. spmallick/learnopencv hosts only a
+    # downloader script that pulls from Dropbox; smahesh29/Gender-and-Age-Detection
+    # mirrors both files directly in the repo, which is reliable.
     "gender_deploy.prototxt": (
-        "https://github.com/spmallick/learnopencv/raw/master/"
-        "AgeGender/gender_deploy.prototxt"
+        "https://github.com/smahesh29/Gender-and-Age-Detection/"
+        "raw/master/gender_deploy.prototxt"
     ),
     "gender_net.caffemodel": (
-        "https://github.com/spmallick/learnopencv/raw/master/"
-        "AgeGender/gender_net.caffemodel"
+        "https://github.com/smahesh29/Gender-and-Age-Detection/"
+        "raw/master/gender_net.caffemodel"
     ),
 }
 

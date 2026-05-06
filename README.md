@@ -130,8 +130,8 @@ http://localhost:5000
 | `yolov8n-hardhat.pt` | ~6 МБ | https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/main/best.pt |
 | `yunet.onnx` | ~230 КБ | https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx |
 | `emotion-ferplus-8.onnx` | ~35 МБ | https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx |
-| `gender_deploy.prototxt` | ~3 КБ | https://github.com/spmallick/learnopencv/raw/master/AgeGender/gender_deploy.prototxt |
-| `gender_net.caffemodel` | ~45 МБ | https://github.com/spmallick/learnopencv/raw/master/AgeGender/gender_net.caffemodel |
+| `gender_deploy.prototxt` | ~3 КБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_deploy.prototxt |
+| `gender_net.caffemodel` | ~45 МБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_net.caffemodel |
 
 > ❗ Файл із HuggingFace (`best.pt`) **обов'язково перейменуйте** на `yolov8n-hardhat.pt`. Усі інші файли мають зберігатися із тими самими іменами, що в URL.
 
