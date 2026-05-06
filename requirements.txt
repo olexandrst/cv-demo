@@ -1,11 +1,10 @@
-# IMPORTANT: requires Python 3.10 or 3.11 (NOT 3.13/3.14 — no wheels yet for
-# numpy 1.x / tensorflow / deepface).
+# Works on Python 3.10–3.14 (no TensorFlow / DeepFace).
+# Profiling uses ONNX models via onnxruntime + OpenCV's built-in DNN.
 
 flask>=3.0,<4.0
 opencv-python>=4.8,<5.0
-numpy>=1.26,<2.0
+numpy>=1.26,<3.0
 pillow>=10.0
 ultralytics>=8.3,<9.0
-deepface>=0.0.93
-tf-keras>=2.16
+onnxruntime>=1.18
 huggingface_hub>=0.23

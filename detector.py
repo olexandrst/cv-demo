@@ -169,6 +169,7 @@ class Detector:
         self.zones: list[list[tuple[float, float]]] = []  # polygons in normalised coords
         self._person_model = None
         self._helmet_model = None
+        self._face_analyzer = None             # profiling.FaceAnalyzer (lazy)
         self._models_lock = threading.Lock()
         self._profiling_cache = _ProfilingCache()
         self._profiling_thread: Optional[threading.Thread] = None
@@ -401,41 +402,32 @@ class Detector:
         frame = draw_texts(frame, texts)
         return frame
 
+    def _get_face_analyzer(self):
+        if self._face_analyzer is not None:
+            return self._face_analyzer
+        with self._models_lock:
+            if self._face_analyzer is None:
+                from profiling import FaceAnalyzer  # lazy import
+                self._face_analyzer = FaceAnalyzer()
+        return self._face_analyzer
+
     def _maybe_run_profiling(self, frame: np.ndarray) -> None:
-        # Throttle: rerun every 0.6s while previous worker is idle.
+        # Throttle: rerun every 0.5s while previous worker is idle.
         now = time.time()
         if self._profiling_busy:
             return
-        if now - self._profiling_cache.timestamp < 0.6:
+        if now - self._profiling_cache.timestamp < 0.5:
             return
         snapshot = frame.copy()
         self._profiling_busy = True
 
         def _worker() -> None:
             try:
-                from deepface import DeepFace
-                results = DeepFace.analyze(
-                    snapshot,
-                    actions=["emotion", "gender"],
-                    detector_backend="opencv",
-                    enforce_detection=False,
-                    silent=True,
-                )
-                if isinstance(results, dict):
-                    results = [results]
-                # filter out spurious whole-frame detections
-                clean = []
-                h, w = snapshot.shape[:2]
-                for r in results:
-                    reg = r.get("region", {})
-                    if reg.get("w", 0) >= w * 0.95 and reg.get("h", 0) >= h * 0.95:
-                        continue
-                    if reg.get("w", 0) < 20 or reg.get("h", 0) < 20:
-                        continue
-                    clean.append(r)
-                self._profiling_cache = _ProfilingCache(faces=clean, timestamp=time.time())
+                analyzer = self._get_face_analyzer()
+                results = analyzer.analyze(snapshot)
+                self._profiling_cache = _ProfilingCache(faces=results, timestamp=time.time())
             except Exception as exc:
-                self._note_error(f"deepface: {exc}")
+                self._note_error(f"profiling: {exc}")
             finally:
                 self._profiling_busy = False
 
