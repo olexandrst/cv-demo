@@ -15,35 +15,12 @@ Returned record format matches what detector.py expects:
 from __future__ import annotations
 
 import threading
-import urllib.request
-from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
-MODELS_DIR = Path(__file__).resolve().parent / "models"
-MODELS_DIR.mkdir(exist_ok=True)
-
-# Stable, public URLs.
-_URLS = {
-    "yunet.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/"
-        "face_detection_yunet/face_detection_yunet_2023mar.onnx"
-    ),
-    "emotion-ferplus-8.onnx": (
-        "https://github.com/onnx/models/raw/main/validated/vision/"
-        "body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx"
-    ),
-    "gender_deploy.prototxt": (
-        "https://github.com/spmallick/learnopencv/raw/master/"
-        "AgeGender/gender_deploy.prototxt"
-    ),
-    "gender_net.caffemodel": (
-        "https://github.com/spmallick/learnopencv/raw/master/"
-        "AgeGender/gender_net.caffemodel"
-    ),
-}
+from downloads import fetch as _fetch_model
 
 _FERPLUS_LABELS = [
     "neutral", "happiness", "surprise", "sadness",
@@ -65,23 +42,6 @@ _GENDER_MEAN = (78.4263377603, 87.7689143744, 114.895847746)
 _GENDER_LABELS = ["Man", "Woman"]
 
 
-def _ensure(name: str) -> Path:
-    p = MODELS_DIR / name
-    if p.exists() and p.stat().st_size > 0:
-        return p
-    url = _URLS[name]
-    print(f"[profiling] downloading {name} from {url} …", flush=True)
-    tmp = p.with_suffix(p.suffix + ".part")
-    try:
-        urllib.request.urlretrieve(url, tmp)
-        tmp.replace(p)
-    except Exception:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
-        raise
-    return p
-
-
 class FaceAnalyzer:
     """Lazy-loading ONNX-based face / emotion / gender analyzer."""
 
@@ -99,7 +59,7 @@ class FaceAnalyzer:
             return self._face_detector
         with self._lock:
             if self._face_detector is None:
-                p = _ensure("yunet.onnx")
+                p = _fetch_model("yunet.onnx")
                 self._face_detector = cv2.FaceDetectorYN.create(
                     str(p), "", (320, 320), 0.6, 0.3, 5000
                 )
@@ -111,7 +71,7 @@ class FaceAnalyzer:
         with self._lock:
             if self._emotion_session is None:
                 import onnxruntime as ort  # heavy import, lazy
-                p = _ensure("emotion-ferplus-8.onnx")
+                p = _fetch_model("emotion-ferplus-8.onnx")
                 self._emotion_session = ort.InferenceSession(
                     str(p), providers=["CPUExecutionProvider"]
                 )
@@ -123,8 +83,8 @@ class FaceAnalyzer:
             return self._gender_net
         with self._lock:
             if self._gender_net is None:
-                proto = _ensure("gender_deploy.prototxt")
-                weights = _ensure("gender_net.caffemodel")
+                proto = _fetch_model("gender_deploy.prototxt")
+                weights = _fetch_model("gender_net.caffemodel")
                 self._gender_net = cv2.dnn.readNetFromCaffe(str(proto), str(weights))
         return self._gender_net
 

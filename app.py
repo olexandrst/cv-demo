@@ -1,6 +1,13 @@
 """Flask server: webcam capture + detection pipeline + MJPEG stream."""
 from __future__ import annotations
 
+# Relax HTTPS verification BEFORE any third-party HTTP client gets imported.
+# Corporate networks often inject a TLS-intercepting CA that lacks fields
+# Python 3.12+ now requires (Authority Key Identifier, revocation list, …).
+# Without this, ultralytics / huggingface_hub fail to download model weights.
+from downloads import relax_global_ssl
+relax_global_ssl()
+
 import threading
 import time
 from typing import Optional

@@ -205,7 +205,9 @@ class Detector:
         with self._models_lock:
             if self._person_model is None:
                 from ultralytics import YOLO  # heavy import — lazy
-                self._person_model = YOLO("yolov8n.pt")
+                from downloads import fetch
+                weights = fetch("yolov8n.pt")
+                self._person_model = YOLO(str(weights))
         return self._person_model
 
     def _get_helmet_model(self):
@@ -214,12 +216,9 @@ class Detector:
         with self._models_lock:
             if self._helmet_model is None:
                 from ultralytics import YOLO
-                from huggingface_hub import hf_hub_download
-                weights = hf_hub_download(
-                    repo_id="keremberke/yolov8n-hard-hat-detection",
-                    filename="best.pt",
-                )
-                self._helmet_model = YOLO(weights)
+                from downloads import fetch
+                weights = fetch("yolov8n-hardhat.pt")
+                self._helmet_model = YOLO(str(weights))
         return self._helmet_model
 
     # -------- person detection ---------------------------------------------
