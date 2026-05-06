@@ -118,25 +118,43 @@ http://localhost:5000
 
 Перший раз режим увімкнеться з затримкою 5–20 с — це нормально.
 
-### Якщо ви за корпоративним проксі
+### ⚠️ Ручне завантаження моделей (за корпоративним проксі)
 
-Корпоративні мережі часто перехоплюють TLS своїм CA, який не задовольняє стандарту (`Authority Key Identifier`, OCSP) — тоді Python 3.12+ та `pip`/`curl` рубають усі завантаження. Цей застосунок:
+Корпоративні мережі часто перехоплюють HTTPS своїм CA-сертифікатом — тоді або відмовляє SSL-валідація Python, або проксі повертає HTML-сторінку блокування замість бінарних ваг (тоді ви побачите в логах щось на кшталт `PytorchStreamReader failed reading zip archive — file is corrupted`).
 
-- сам тягне всі ваги через власний завантажувач із вимкненою перевіркою сертифікатів (це робиться один раз для відомих публічних артефактів);
-- глобально знімає перевірку HTTPS на час процесу (`PYTHONHTTPSVERIFY=0`, `SSL_CERT_FILE=""`).
+Найнадійніший спосіб — завантажити файли з домашнього/мобільного інтернету і покласти їх у папку `models/` поряд із `app.py`. Створіть папку `models/` якщо її немає, і збережіть туди шість файлів:
 
-Якщо мережа все одно блокує — завантажте файли вручну (з домашнього/мобільного інтернету) і покладіть у папку `models/` із саме такими іменами:
+| Файл (саме таке ім'я) | Розмір | Посилання |
+|---|---|---|
+| `yolov8n.pt` | ~6 МБ | https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt |
+| `yolov8n-hardhat.pt` | ~6 МБ | https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/main/best.pt |
+| `yunet.onnx` | ~230 КБ | https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx |
+| `emotion-ferplus-8.onnx` | ~35 МБ | https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx |
+| `gender_deploy.prototxt` | ~3 КБ | https://github.com/spmallick/learnopencv/raw/master/AgeGender/gender_deploy.prototxt |
+| `gender_net.caffemodel` | ~45 МБ | https://github.com/spmallick/learnopencv/raw/master/AgeGender/gender_net.caffemodel |
+
+> ❗ Файл із HuggingFace (`best.pt`) **обов'язково перейменуйте** на `yolov8n-hardhat.pt`. Усі інші файли мають зберігатися із тими самими іменами, що в URL.
+
+Структура має виглядати так:
 
 ```
-models/yolov8n.pt
-models/yolov8n-hardhat.pt
-models/yunet.onnx
-models/emotion-ferplus-8.onnx
-models/gender_deploy.prototxt
-models/gender_net.caffemodel
+cv-demo/
+├── app.py
+├── models/
+│   ├── yolov8n.pt
+│   ├── yolov8n-hardhat.pt
+│   ├── yunet.onnx
+│   ├── emotion-ferplus-8.onnx
+│   ├── gender_deploy.prototxt
+│   └── gender_net.caffemodel
+└── …
 ```
 
-URL для завантаження — у `downloads.py` (`URLS = {...}`). Як тільки файли є локально, додаток у мережу не лізе.
+Як тільки файли є локально, додаток у мережу не лізе взагалі.
+
+#### Якщо файл уже завантажився, але "битий"
+
+Симптом — в логах постійно `PytorchStreamReader failed reading zip archive` або `file is corrupted`. На старті додаток автоматично перевіряє файли в `models/` за магічними байтами і видаляє ті, що насправді є HTML-сторінкою. Якщо хочете перевірити вручну — просто видаліть `models/` і покладіть файли заново.
 
 ## Користування
 

@@ -59,12 +59,41 @@ _MIN_SIZE = {
     "gender_net.caffemodel":  40_000_000,
 }
 
+# Magic-number prefixes (first few bytes) we expect to see for each format.
+# Used to reject HTML block-pages saved as ".pt", etc.
+_MAGIC = {
+    ".pt":          (b"PK",),                    # PyTorch checkpoint = ZIP
+    ".onnx":        (b"\x08", b"\x0a"),          # protobuf varint tags
+    ".caffemodel":  (b"\x08", b"\x0a", b"\x12"),
+    ".prototxt":    (b"name", b"layer", b"inp", b"#"),  # text protobuf
+}
+
 
 def _insecure_ctx() -> ssl.SSLContext:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
+def _looks_valid(path: Path) -> tuple[bool, str]:
+    """Returns (ok, reason). Validates magic bytes and rejects HTML pages."""
+    suffix = path.suffix.lower()
+    expected = _MAGIC.get(suffix)
+    if expected is None:
+        return True, "unknown extension — skipping magic check"
+    try:
+        with open(path, "rb") as f:
+            head = f.read(64)
+    except OSError as exc:
+        return False, f"can't read: {exc}"
+    head_lower = head.lower().lstrip()
+    if head_lower.startswith(b"<!doctype") or head_lower.startswith(b"<html") \
+       or b"<head" in head_lower[:200] or b"<title" in head_lower[:200]:
+        return False, "file is HTML (proxy/captive-portal page)"
+    if not any(head.startswith(m) for m in expected):
+        return False, f"unexpected magic bytes: {head[:8]!r}"
+    return True, "ok"
 
 
 def _download(url: str, dest: Path, attempts: int = 3) -> None:
@@ -76,9 +105,15 @@ def _download(url: str, dest: Path, attempts: int = 3) -> None:
                 url,
                 headers={"User-Agent": "cv-demo/1.0 (+https://example.local)"},
             )
-            with urllib.request.urlopen(req, context=_insecure_ctx(), timeout=120) as r, \
-                 open(tmp, "wb") as f:
-                shutil.copyfileobj(r, f, length=1024 * 256)
+            with urllib.request.urlopen(req, context=_insecure_ctx(), timeout=120) as r:
+                ctype = (r.headers.get("Content-Type") or "").lower()
+                if "html" in ctype:
+                    raise RuntimeError(
+                        f"server returned HTML (Content-Type: {ctype}); "
+                        f"corporate proxy is likely intercepting the request"
+                    )
+                with open(tmp, "wb") as f:
+                    shutil.copyfileobj(r, f, length=1024 * 256)
             tmp.replace(dest)
             return
         except Exception as exc:
@@ -93,22 +128,89 @@ def _download(url: str, dest: Path, attempts: int = 3) -> None:
 
 
 def fetch(name: str) -> Path:
-    """Return a path to the local weight file, downloading if needed."""
+    """Return a path to the local weight file, downloading if needed.
+
+    If a previously-cached file is corrupted (e.g. an HTML block-page saved
+    as ``.pt``), it is deleted and re-downloaded. If automatic download
+    fails, the raised error tells the user exactly where to drop the file
+    by hand.
+    """
     if name not in URLS:
         raise KeyError(f"unknown model name: {name}")
     p = MODELS_DIR / name
     min_size = _MIN_SIZE.get(name, 1_000)
-    if p.exists() and p.stat().st_size >= min_size:
-        return p
+
+    # Validate any pre-existing file; remove if it's bogus.
+    if p.exists():
+        ok, reason = _looks_valid(p)
+        if not ok or p.stat().st_size < min_size:
+            print(
+                f"[downloads] discarding cached {name} — invalid: {reason} "
+                f"({p.stat().st_size:,} bytes)",
+                flush=True,
+            )
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        else:
+            return p
+
     print(f"[downloads] fetching {name} -> {p}", flush=True)
-    _download(URLS[name], p)
-    if p.stat().st_size < min_size:
+    try:
+        _download(URLS[name], p)
+    except Exception as exc:
         raise RuntimeError(
-            f"downloaded {name} is too small ({p.stat().st_size} bytes); "
-            f"the network probably injected a captive-portal page"
+            f"could not download {name} from {URLS[name]} "
+            f"({exc}). Download it manually and place it as: {p}"
+        ) from exc
+
+    if p.stat().st_size < min_size:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"downloaded {name} is too small ({p.stat().st_size} bytes) — "
+            f"the network probably returned a captive-portal page. "
+            f"Download it manually from {URLS[name]} and place it as: {p}"
+        )
+    ok, reason = _looks_valid(p)
+    if not ok:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"downloaded {name} is not a valid model file ({reason}). "
+            f"Download it manually from {URLS[name]} and place it as: {p}"
         )
     print(f"[downloads]   ok ({p.stat().st_size:,} bytes)", flush=True)
     return p
+
+
+def validate_cache() -> list[str]:
+    """Sweep ./models/ on startup, deleting any corrupted weight files.
+
+    Returns a list of human-readable messages about what was removed.
+    """
+    messages: list[str] = []
+    for name in URLS:
+        p = MODELS_DIR / name
+        if not p.exists():
+            continue
+        ok, reason = _looks_valid(p)
+        too_small = p.stat().st_size < _MIN_SIZE.get(name, 1_000)
+        if not ok or too_small:
+            try:
+                p.unlink()
+                messages.append(
+                    f"{name}: removed (invalid — {reason}, "
+                    f"{p.stat().st_size if p.exists() else 0} bytes)"
+                )
+            except OSError as exc:
+                messages.append(f"{name}: invalid but couldn't delete: {exc}")
+    return messages
 
 
 def relax_global_ssl() -> None:

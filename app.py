@@ -5,8 +5,10 @@ from __future__ import annotations
 # Corporate networks often inject a TLS-intercepting CA that lacks fields
 # Python 3.12+ now requires (Authority Key Identifier, revocation list, …).
 # Without this, ultralytics / huggingface_hub fail to download model weights.
-from downloads import relax_global_ssl
+from downloads import relax_global_ssl, validate_cache
 relax_global_ssl()
+for _msg in validate_cache():
+    print(f"[startup] {_msg}", flush=True)
 
 import threading
 import time
