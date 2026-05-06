@@ -34,31 +34,49 @@ py --list      # покаже всі встановлені версії
 py -3.11 -V    # має вивести: Python 3.11.x
 ```
 
-Якщо `Python 3.11` немає у списку — встановіть його:
+Якщо `Python 3.11` немає у списку — поставте його. **Адмін-прав не потрібно**, є два варіанти.
 
-1. Зайдіть на https://www.python.org/downloads/release/python-3119/ (або будь-який 3.11.x).
-2. Завантажте **Windows installer (64-bit)**.
-3. Під час інсталяції поставте галочку **"Add python.exe to PATH"**.
-4. Після інсталяції `py -3.11 -V` має працювати.
+#### Варіант A. Інсталятор python.org (per-user)
 
-> Не видаляйте Python 3.14 — `py -3.11` спокійно існує паралельно.
+1. Завантажте: https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+2. Запустіть. На першому екрані:
+   - ✅ **Add python.exe to PATH**
+   - ❌ **Install for all users** — НЕ ставте (саме ця галочка вимагає адмінки)
+3. Натисніть **Install Now** — установка в `%LOCALAPPDATA%\Programs\Python\Python311\` (без адмінки).
+
+#### Варіант B. uv (рекомендую)
+
+[`uv`](https://github.com/astral-sh/uv) — швидкий менеджер Python + пакетів від Astral. Не потребує адмінки, сам завантажує потрібну версію Python у профіль користувача, а пакети ставить у 5–10 разів швидше за pip.
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# перезапустіть PowerShell після інсталяції
+uv python install 3.11
+```
+
+> Не видаляйте Python 3.14 — і `py -3.11`, і `uv` спокійно існують паралельно.
 
 ## Встановлення (Windows)
 
-```powershell
-git clone <repo> cv-demo
-cd cv-demo
+### З `uv` (швидше)
 
+```powershell
+cd cv-demo
+uv venv --python 3.11 .venv
+.venv\Scripts\activate
+uv pip install -r requirements.txt
+```
+
+### Зі стандартним `pip`
+
+```powershell
+cd cv-demo
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 
+python -V                                   # перевірте: Python 3.11.x
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-Перевірити, що активувався саме 3.11:
-```powershell
-python -V       # Python 3.11.x
 ```
 
 > На macOS/Linux замість `py -3.11` використовуйте `python3.11`.
