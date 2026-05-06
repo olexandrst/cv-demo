@@ -93,22 +93,24 @@ def _insecure_ctx() -> ssl.SSLContext:
 
 
 def _looks_valid(path: Path) -> tuple[bool, str]:
-    """Returns (ok, reason). Validates magic bytes and rejects HTML pages."""
-    suffix = path.suffix.lower()
-    expected = _MAGIC.get(suffix)
-    if expected is None:
-        return True, "unknown extension — skipping magic check"
+    """Returns (ok, reason). Only rejects files that look like HTML proxy
+    block-pages — we can't reliably know every binary format's exact magic
+    bytes, and false-positives here would erase a working model file."""
     try:
         with open(path, "rb") as f:
-            head = f.read(64)
+            head = f.read(512)
     except OSError as exc:
         return False, f"can't read: {exc}"
     head_lower = head.lower().lstrip()
-    if head_lower.startswith(b"<!doctype") or head_lower.startswith(b"<html") \
-       or b"<head" in head_lower[:200] or b"<title" in head_lower[:200]:
+    if (
+        head_lower.startswith(b"<!doctype")
+        or head_lower.startswith(b"<html")
+        or head_lower.startswith(b"<?xml")
+        or b"<head" in head_lower[:300]
+        or b"<title" in head_lower[:300]
+        or b"<body" in head_lower[:300]
+    ):
         return False, "file is HTML (proxy/captive-portal page)"
-    if not any(head.startswith(m) for m in expected):
-        return False, f"unexpected magic bytes: {head[:8]!r}"
     return True, "ok"
 
 
@@ -206,24 +208,21 @@ def fetch(name: str) -> Path:
 
 
 def validate_cache() -> list[str]:
-    """Sweep ./models/ on startup, deleting any corrupted weight files.
-
-    Returns a list of human-readable messages about what was removed.
-    """
+    """Sweep ./models/ on startup. Only deletes files that are obvious
+    HTML proxy block-pages — never touches anything that might be a real
+    weight file, even if it's smaller than expected. False-positives here
+    silently break detection."""
     messages: list[str] = []
     for name in URLS:
         p = MODELS_DIR / name
         if not p.exists():
             continue
         ok, reason = _looks_valid(p)
-        too_small = p.stat().st_size < _MIN_SIZE.get(name, 1_000)
-        if not ok or too_small:
+        if not ok:
+            size = p.stat().st_size if p.exists() else 0
             try:
                 p.unlink()
-                messages.append(
-                    f"{name}: removed (invalid — {reason}, "
-                    f"{p.stat().st_size if p.exists() else 0} bytes)"
-                )
+                messages.append(f"{name}: removed (invalid — {reason}, {size} bytes)")
             except OSError as exc:
                 messages.append(f"{name}: invalid but couldn't delete: {exc}")
     return messages
