@@ -23,9 +23,25 @@
 ## Вимоги
 
 - Windows 10/11 (працює також на macOS/Linux).
-- **Python 3.10 або 3.11** (DeepFace + tf-keras дружать саме з ними).
+- **Python 3.10 або 3.11** — обов'язково. У Python 3.12/3.13/3.14 ще немає wheels для NumPy 1.x, TensorFlow та DeepFace; pip буде намагатися компілювати з джерел і впаде.
 - USB- або вбудована вебкамера.
 - ~3 ГБ вільного місця (моделі завантажуються при першому запуску).
+
+### Перевірка версії Python
+
+```powershell
+py --list      # покаже всі встановлені версії
+py -3.11 -V    # має вивести: Python 3.11.x
+```
+
+Якщо `Python 3.11` немає у списку — встановіть його:
+
+1. Зайдіть на https://www.python.org/downloads/release/python-3119/ (або будь-який 3.11.x).
+2. Завантажте **Windows installer (64-bit)**.
+3. Під час інсталяції поставте галочку **"Add python.exe to PATH"**.
+4. Після інсталяції `py -3.11 -V` має працювати.
+
+> Не видаляйте Python 3.14 — `py -3.11` спокійно існує паралельно.
 
 ## Встановлення (Windows)
 
@@ -36,11 +52,27 @@ cd cv-demo
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 
-pip install --upgrade pip
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Перевірити, що активувався саме 3.11:
+```powershell
+python -V       # Python 3.11.x
+```
+
 > На macOS/Linux замість `py -3.11` використовуйте `python3.11`.
+
+### Якщо все одно бачите помилку компіляції NumPy
+
+Це означає, що venv створено не на 3.11. Видаліть `.venv` і повторіть:
+```powershell
+Remove-Item -Recurse -Force .venv
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python -V         # переконайтеся: 3.11.x
+pip install -r requirements.txt
+```
 
 ## Запуск
 

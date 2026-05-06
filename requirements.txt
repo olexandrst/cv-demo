@@ -1,7 +1,11 @@
-flask==3.0.3
-opencv-python==4.10.0.84
-numpy==1.26.4
-ultralytics==8.3.40
-deepface==0.0.93
-tf-keras==2.16.0
-huggingface_hub==0.26.2
+# IMPORTANT: requires Python 3.10 or 3.11 (NOT 3.13/3.14 — no wheels yet for
+# numpy 1.x / tensorflow / deepface).
+
+flask>=3.0,<4.0
+opencv-python>=4.8,<5.0
+numpy>=1.26,<2.0
+pillow>=10.0
+ultralytics>=8.3,<9.0
+deepface>=0.0.93
+tf-keras>=2.16
+huggingface_hub>=0.23
