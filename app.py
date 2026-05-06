@@ -25,10 +25,11 @@ from detector import Detector
 # Webcam capture thread
 # ---------------------------------------------------------------------------
 class CameraStream:
-    def __init__(self, src: int = 0, width: int = 1280, height: int = 720) -> None:
+    def __init__(self, src: int = 0, width: int = 1280, height: int = 720, mirror: bool = True) -> None:
         self.src = src
         self.width = width
         self.height = height
+        self.mirror = mirror
         self.cap: Optional[cv2.VideoCapture] = None
         self._frame: Optional[np.ndarray] = None
         self._lock = threading.Lock()
@@ -54,6 +55,8 @@ class CameraStream:
             if not ok or frame is None:
                 time.sleep(0.05)
                 continue
+            if self.mirror:
+                frame = cv2.flip(frame, 1)  # selfie-style horizontal mirror
             with self._lock:
                 self._frame = frame
 
@@ -73,7 +76,10 @@ class CameraStream:
 # Application state
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
-camera = CameraStream(src=0).start()
+import os as _os
+_cam_w = int(_os.environ.get("CV_CAM_WIDTH", "1280"))
+_cam_h = int(_os.environ.get("CV_CAM_HEIGHT", "720"))
+camera = CameraStream(src=0, width=_cam_w, height=_cam_h, mirror=True).start()
 detector = Detector()
 
 

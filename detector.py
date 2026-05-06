@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -161,19 +160,17 @@ def draw_helmet_icon(frame: np.ndarray, cx: int, cy: int, color: tuple[int, int,
 # ---------------------------------------------------------------------------
 # Detector
 # ---------------------------------------------------------------------------
-@dataclass
-class Profile:
-    label_ua: str = ""
-    color_bgr: tuple[int, int, int] = GRAY_BGR
-
-
-@dataclass
-class _ProfilingCache:
-    faces: list = field(default_factory=list)   # list of dicts: region + dominant_emotion + dominant_gender
-    timestamp: float = 0.0
+# Tunable: lower = faster, less accurate. 320 is the floor we'd recommend.
+YOLO_IMGSZ = int(__import__("os").environ.get("YOLO_IMGSZ", "384"))
 
 
 class Detector:
+    """All heavy inference (YOLO person, YOLO helmet, face analyser) runs in
+    a single background thread so MJPEG streaming never blocks. Drawing
+    methods just consume the latest cached results — they're sub-millisecond
+    cheap, so the live stream FPS is bounded by the camera and JPEG encode,
+    not the models."""
+
     def __init__(self) -> None:
         self.mode: str = "detection"           # detection | zones | ppe | profiling
         self.zones: list[list[tuple[float, float]]] = []  # polygons in normalised coords
@@ -181,9 +178,20 @@ class Detector:
         self._helmet_model = None
         self._face_analyzer = None             # profiling.FaceAnalyzer (lazy)
         self._models_lock = threading.Lock()
-        self._profiling_cache = _ProfilingCache()
-        self._profiling_thread: Optional[threading.Thread] = None
-        self._profiling_busy = False
+
+        # Latest frame for the inference loop to chew on. We always want the
+        # *freshest* one — older queued frames are dropped.
+        self._latest_input: Optional[np.ndarray] = None
+        self._latest_input_lock = threading.Lock()
+
+        # Cached results, replaced atomically by reference.
+        self._cache_persons: list[tuple[int, int, int, int, float]] = []
+        self._cache_helmet_heads: list[tuple[int, int, int, int, bool]] = []
+        self._cache_faces: list[dict] = []
+
+        self._inference_running = True
+        self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
+        self._inference_thread.start()
         self.errors: list[str] = []
 
     # -------- public API ----------------------------------------------------
@@ -195,6 +203,10 @@ class Detector:
         self.zones = zones or []
 
     def process(self, frame_bgr: np.ndarray) -> np.ndarray:
+        # Hand the freshest frame to the inference loop and immediately draw
+        # whatever we already have cached. This is what decouples the stream
+        # FPS from inference latency.
+        self._submit_for_inference(frame_bgr)
         try:
             if self.mode == "detection":
                 return self._mode_detection(frame_bgr)
@@ -207,6 +219,46 @@ class Detector:
         except Exception as exc:  # never break the stream
             self._note_error(f"process({self.mode}): {exc}")
         return frame_bgr
+
+    # -------- async inference loop ------------------------------------------
+    def _submit_for_inference(self, frame: np.ndarray) -> None:
+        # Copy because the caller will draw on top of `frame`.
+        snap = frame.copy()
+        with self._latest_input_lock:
+            self._latest_input = snap
+
+    def _inference_loop(self) -> None:
+        last_face_ts = 0.0
+        face_min_interval = 0.4  # seconds — face analysis is the heaviest
+        while self._inference_running:
+            with self._latest_input_lock:
+                frame = self._latest_input
+                self._latest_input = None
+            if frame is None:
+                time.sleep(0.005)
+                continue
+            mode = self.mode
+            # Person detection is needed by every mode.
+            try:
+                self._cache_persons = self._run_person_detection(frame)
+            except Exception as exc:
+                self._note_error(f"person: {exc}")
+                time.sleep(0.05)
+                continue
+            if mode == "ppe":
+                try:
+                    self._cache_helmet_heads = self._run_helmet_detection(frame)
+                except Exception as exc:
+                    self._note_error(f"helmet: {exc}")
+            if mode == "profiling":
+                now = time.time()
+                if now - last_face_ts >= face_min_interval:
+                    last_face_ts = now
+                    try:
+                        analyzer = self._get_face_analyzer()
+                        self._cache_faces = analyzer.analyze(frame)
+                    except Exception as exc:
+                        self._note_error(f"profiling: {exc}")
 
     # -------- model loaders -------------------------------------------------
     def _get_person_model(self):
@@ -231,11 +283,10 @@ class Detector:
                 self._helmet_model = YOLO(str(weights))
         return self._helmet_model
 
-    # -------- person detection ---------------------------------------------
-    def _detect_persons(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int, float]]:
+    # -------- inference primitives (called from the inference thread) -------
+    def _run_person_detection(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int, float]]:
         model = self._get_person_model()
-        # imgsz lower = faster; conf 0.4 keeps demo clean
-        res = model.predict(frame_bgr, imgsz=480, conf=0.4, classes=[0], verbose=False)
+        res = model.predict(frame_bgr, imgsz=YOLO_IMGSZ, conf=0.4, classes=[0], verbose=False)
         out: list[tuple[int, int, int, int, float]] = []
         if not res:
             return out
@@ -247,9 +298,32 @@ class Detector:
             out.append((x1, y1, x2, y2, float(conf)))
         return out
 
+    def _run_helmet_detection(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int, bool]]:
+        model = self._get_helmet_model()
+        hres = model.predict(frame_bgr, imgsz=YOLO_IMGSZ, conf=0.35, verbose=False)
+        out: list[tuple[int, int, int, int, bool]] = []
+        if not hres or hres[0].boxes is None:
+            return out
+        names = hres[0].names
+        for box, cls_idx in zip(
+            hres[0].boxes.xyxy.cpu().numpy(),
+            hres[0].boxes.cls.cpu().numpy().astype(int),
+        ):
+            cls_name = str(names.get(int(cls_idx), "")).lower()
+            x1, y1, x2, y2 = map(int, box)
+            if "hardhat" in cls_name or "helmet" in cls_name:
+                has_helmet = not (
+                    cls_name.startswith("no")
+                    or "no-" in cls_name
+                    or "no_" in cls_name
+                    or "without" in cls_name
+                )
+                out.append((x1, y1, x2, y2, has_helmet))
+        return out
+
     # -------- mode: plain detection -----------------------------------------
     def _mode_detection(self, frame: np.ndarray) -> np.ndarray:
-        persons = self._detect_persons(frame)
+        persons = self._cache_persons
         texts: list = []
         for i, (x1, y1, x2, y2, conf) in enumerate(persons):
             color = PERSON_PALETTE_BGR[i % len(PERSON_PALETTE_BGR)]
@@ -261,7 +335,7 @@ class Detector:
     # -------- mode: zones of interest ---------------------------------------
     def _mode_zones(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
-        persons = self._detect_persons(frame)
+        persons = self._cache_persons
 
         # Convert zones -> pixel polygons
         zone_polys: list[np.ndarray] = []
@@ -328,33 +402,8 @@ class Detector:
 
     # -------- mode: PPE / hard-hat ------------------------------------------
     def _mode_ppe(self, frame: np.ndarray) -> np.ndarray:
-        persons = self._detect_persons(frame)
-        try:
-            model = self._get_helmet_model()
-            hres = model.predict(frame, imgsz=480, conf=0.35, verbose=False)
-        except Exception as exc:
-            self._note_error(f"helmet model: {exc}")
-            return self._mode_detection(frame)
-
-        # Build list of (head_box, has_helmet)
-        heads: list[tuple[int, int, int, int, bool]] = []
-        if hres and hres[0].boxes is not None:
-            names = hres[0].names  # dict idx->name
-            for box, cls_idx in zip(
-                hres[0].boxes.xyxy.cpu().numpy(),
-                hres[0].boxes.cls.cpu().numpy().astype(int),
-            ):
-                cls_name = str(names.get(int(cls_idx), "")).lower()
-                x1, y1, x2, y2 = map(int, box)
-                if "hardhat" in cls_name or "helmet" in cls_name:
-                    has_helmet = not (
-                        cls_name.startswith("no")
-                        or "no-" in cls_name
-                        or "no_" in cls_name
-                        or "without" in cls_name
-                    )
-                    heads.append((x1, y1, x2, y2, has_helmet))
-
+        persons = self._cache_persons
+        heads = self._cache_helmet_heads
         texts: list = []
         for i, (px1, py1, px2, py2, _c) in enumerate(persons):
             # find the head whose centre lies in the upper region of this person
@@ -391,9 +440,8 @@ class Detector:
 
     # -------- mode: profiling (emotion + gender) ---------------------------
     def _mode_profiling(self, frame: np.ndarray) -> np.ndarray:
-        persons = self._detect_persons(frame)
-        self._maybe_run_profiling(frame)
-        cache = self._profiling_cache.faces
+        persons = self._cache_persons
+        cache = self._cache_faces
 
         # match each face from cache to a person
         person_info: list[Optional[dict]] = [None] * len(persons)
@@ -443,30 +491,6 @@ class Detector:
                 from profiling import FaceAnalyzer  # lazy import
                 self._face_analyzer = FaceAnalyzer()
         return self._face_analyzer
-
-    def _maybe_run_profiling(self, frame: np.ndarray) -> None:
-        # Throttle: rerun every 0.5s while previous worker is idle.
-        now = time.time()
-        if self._profiling_busy:
-            return
-        if now - self._profiling_cache.timestamp < 0.5:
-            return
-        snapshot = frame.copy()
-        self._profiling_busy = True
-
-        def _worker() -> None:
-            try:
-                analyzer = self._get_face_analyzer()
-                results = analyzer.analyze(snapshot)
-                self._profiling_cache = _ProfilingCache(faces=results, timestamp=time.time())
-            except Exception as exc:
-                self._note_error(f"profiling: {exc}")
-            finally:
-                self._profiling_busy = False
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        self._profiling_thread = t
 
     def _note_error(self, msg: str) -> None:
         self.errors.append(msg)
