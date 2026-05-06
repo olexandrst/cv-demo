@@ -20,13 +20,20 @@ Output record format (matches what detector.py expects):
 """
 from __future__ import annotations
 
+import os
 import threading
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from downloads import fetch as _fetch_model
+
+# Set EMOTION_DEBUG=1 to print top-3 emotion probabilities + dump aligned
+# face crops to ./debug/aligned_*.jpg for visual inspection.
+_EMOTION_DEBUG = os.environ.get("EMOTION_DEBUG", "0") not in ("", "0", "false", "False")
+_DEBUG_DIR = Path(__file__).resolve().parent / "debug"
 
 # Class order for facial_expression_recognition_mobilefacenet_2022july.onnx
 _EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
@@ -135,31 +142,45 @@ class FaceAnalyzer:
     def _predict_emotion(self, aligned_112: np.ndarray, history_key: tuple[int, int]) -> str:
         try:
             net = self._ensure_emotion()
-            # opencv_zoo's mobilefacenet demo normalises to [-1, 1]:
-            #   blob = (pixel/255 - 0.5) / 0.5  ==  (pixel - 127.5) / 127.5
-            # Feeding it the [0, 1] range we used before made it collapse
-            # to "neutral" for every face.
+            # Mirror opencv_zoo's demo exactly:
+            #   blob = blobFromImage(img, 1.0, (112,112), [0,0,0])
+            #   blob = blob / 255.0
+            #   blob = (blob - 0.5) / 0.5
+            # We keep the multiply-by-mean-then-scale form in a single
+            # blobFromImage call to avoid any float32→float64 upcasts.
+            # mobilefacenet was trained in PyTorch on RGB images normalised
+            # to [-1, 1]. We feed it BGR-from-OpenCV and tell blobFromImage
+            # to swap to RGB.
             blob = cv2.dnn.blobFromImage(
-                aligned_112,
-                scalefactor=1.0 / 127.5,
-                size=(112, 112),
-                mean=(127.5, 127.5, 127.5),
-                swapRB=False,
-                crop=False,
+                aligned_112, 1.0, (112, 112), [0, 0, 0],
+                swapRB=True, crop=False,
             )
+            blob = (blob / 255.0 - 0.5) / 0.5
+            blob = blob.astype(np.float32)
             net.setInput(blob)
             logits = net.forward().flatten()
             probs = self._softmax(logits)
 
-            # Temporal smoothing — exponential moving average.
+            # Verbose debug — set EMOTION_DEBUG=0 in env to silence.
+            if _EMOTION_DEBUG:
+                top3 = np.argsort(probs)[::-1][:3]
+                msg = "  ".join(
+                    f"{_EMOTION_LABELS[i]}={probs[i]:.2f}" for i in top3
+                )
+                print(f"[emotion@{history_key}] {msg}", flush=True)
+
+            # Light EMA — bias toward the latest reading so the demo feels
+            # responsive when a visitor changes expression.
             prev = self._emotion_history.get(history_key)
             if prev is not None and prev.shape == probs.shape:
-                probs = 0.5 * prev + 0.5 * probs
+                probs = 0.3 * prev + 0.7 * probs
             self._emotion_history[history_key] = probs
 
             idx = int(np.argmax(probs))
             return _EMOTION_LABELS[idx]
-        except Exception:
+        except Exception as exc:
+            if _EMOTION_DEBUG:
+                print(f"[emotion] error: {exc}", flush=True)
             return "neutral"
 
     def _predict_gender(self, face_bgr: np.ndarray) -> str:
@@ -239,6 +260,11 @@ class FaceAnalyzer:
             cy = (y + fh // 2) // 32 * 32
             key = (int(cx), int(cy))
             seen_keys.add(key)
+
+            if _EMOTION_DEBUG:
+                _DEBUG_DIR.mkdir(exist_ok=True)
+                tag = f"{key[0]:04d}_{key[1]:04d}"
+                cv2.imwrite(str(_DEBUG_DIR / f"aligned_{tag}.jpg"), aligned)
 
             results.append({
                 "region": {"x": int(x), "y": int(y), "w": int(fw), "h": int(fh)},
