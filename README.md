@@ -9,15 +9,14 @@
 | **Детекція людей** | Кожна людина — у власному кольоровому bounding-боксі (без червоного). |
 | **Зони інтересу** | Малюйте полігональні зони мишею. Коли хтось у зоні — її периметр і бокс людини стають червоними. |
 | **Засоби захисту** | Детектує шолом на голові. Зелений бокс + іконка шолома, якщо є. Червоний бокс + перекреслена іконка, якщо немає. |
-| **Профілювання** | Стать (чоловік/жінка) і настрій (нормальний / веселий / сумний / сердитий / наляканий…). Колір боксу залежить від настрою. |
+| **Профілювання** | Стать (чоловік/жінка), вікова група (8 діапазонів від 0 до 60+) і настрій (нормальний / веселий / сумний / сердитий / наляканий / здивований / роздратований). Колір боксу залежить від настрою. |
 
 ## Стек
 
 - **Python + Flask** — сервер, MJPEG-стрім, REST для перемикання режимів.
-- **OpenCV** — захоплення з вебкамери, YuNet face detection, gender CNN (Caffe).
+- **OpenCV** — захоплення з вебкамери, YuNet face detection, MobileFaceNet emotion (ONNX), Levi-Hassner gender + age (Caffe). Все через `cv2.dnn`, без TensorFlow.
 - **Ultralytics YOLOv8 (nano)** — детекція людей.
 - **`keremberke/yolov8n-hard-hat-detection`** (HuggingFace) — детекція шолома.
-- **ONNX Runtime + FER+** — емоції (без TensorFlow).
 - **HTML5 + JS** — інтерфейс із canvas-overlay для малювання зон.
 
 ## Вимоги
@@ -129,9 +128,11 @@ http://localhost:5000
 | `yolov8n.pt` | ~6 МБ | https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt |
 | `yolov8n-hardhat.pt` | ~6 МБ | https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/main/best.pt |
 | `yunet.onnx` | ~230 КБ | https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx |
-| `emotion-ferplus-8.onnx` | ~35 МБ | https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx |
+| `emotion_mobilefacenet.onnx` | ~13 МБ | https://github.com/opencv/opencv_zoo/raw/main/models/facial_expression_recognition_mobilefacenet/facial_expression_recognition_mobilefacenet_2022july.onnx |
 | `gender_deploy.prototxt` | ~3 КБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_deploy.prototxt |
 | `gender_net.caffemodel` | ~45 МБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_net.caffemodel |
+| `age_deploy.prototxt` | ~3 КБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/age_deploy.prototxt |
+| `age_net.caffemodel` | ~45 МБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/age_net.caffemodel |
 
 > ❗ Файл із HuggingFace (`best.pt`) **обов'язково перейменуйте** на `yolov8n-hardhat.pt`. Усі інші файли мають зберігатися із тими самими іменами, що в URL.
 

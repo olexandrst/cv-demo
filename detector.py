@@ -56,6 +56,16 @@ EMOTION_UA = {
     "disgust":  "роздратований",
 }
 GENDER_UA = {"Man": "чоловік", "Woman": "жінка"}
+AGE_UA = {
+    "(0-2)":   "0-2р",
+    "(4-6)":   "4-6р",
+    "(8-12)":  "8-12р",
+    "(15-20)": "15-20р",
+    "(25-32)": "25-32р",
+    "(38-43)": "38-43р",
+    "(48-53)": "48-53р",
+    "(60-100)": "60+р",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -264,11 +274,31 @@ class Detector:
         intruded = [False] * len(zone_polys)
         person_alarms = [False] * len(persons)
 
+        def _box_in_poly(box: tuple[int, int, int, int], poly: np.ndarray) -> bool:
+            """True if any of 9 sample points on `box` lies inside `poly`,
+            OR any vertex of `poly` lies inside `box`. Robust for cases where
+            the person bbox extends off-screen below the zone, or the zone
+            is small and entirely contained inside the person bbox."""
+            x1, y1, x2, y2 = box
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            samples = (
+                (cx, cy),
+                (cx, y1), (cx, y2), (x1, cy), (x2, cy),
+                (x1, y1), (x2, y1), (x1, y2), (x2, y2),
+            )
+            for px, py in samples:
+                if cv2.pointPolygonTest(poly, (float(px), float(py)), False) >= 0:
+                    return True
+            for v in poly:
+                vx, vy = float(v[0]), float(v[1])
+                if x1 <= vx <= x2 and y1 <= vy <= y2:
+                    return True
+            return False
+
         for pi, (x1, y1, x2, y2, _conf) in enumerate(persons):
-            # Use bottom-centre of bbox as person's position on the floor.
-            foot = (int((x1 + x2) / 2), int(y2))
+            box = (x1, y1, x2, y2)
             for zi, poly in enumerate(zone_polys):
-                if cv2.pointPolygonTest(poly, foot, False) >= 0:
+                if _box_in_poly(box, poly):
                     intruded[zi] = True
                     person_alarms[pi] = True
 
@@ -383,12 +413,16 @@ class Detector:
             if info:
                 emotion = (info.get("dominant_emotion") or "neutral").lower()
                 gender = info.get("dominant_gender") or ""
+                age = info.get("dominant_age") or ""
                 color = EMOTION_COLORS_BGR.get(emotion, GRAY_BGR)
                 gender_ua = GENDER_UA.get(gender, "")
                 mood_ua = EMOTION_UA.get(emotion, emotion)
+                age_ua = AGE_UA.get(age, "")
                 lines = []
                 if gender_ua:
                     lines.append(gender_ua)
+                if age_ua:
+                    lines.append(age_ua)
                 lines.append(f"настрій: {mood_ua}")
                 label = " · ".join(lines)
             else:
