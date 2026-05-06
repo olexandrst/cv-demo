@@ -115,7 +115,6 @@ class FaceAnalyzer:
             M, _ = cv2.estimateAffinePartial2D(
                 landmarks.astype(np.float32),
                 _FACE_TEMPLATE_112,
-                method=cv2.LMEDS,
             )
             if M is None:
                 return None
@@ -136,9 +135,17 @@ class FaceAnalyzer:
     def _predict_emotion(self, aligned_112: np.ndarray, history_key: tuple[int, int]) -> str:
         try:
             net = self._ensure_emotion()
+            # opencv_zoo's mobilefacenet demo normalises to [-1, 1]:
+            #   blob = (pixel/255 - 0.5) / 0.5  ==  (pixel - 127.5) / 127.5
+            # Feeding it the [0, 1] range we used before made it collapse
+            # to "neutral" for every face.
             blob = cv2.dnn.blobFromImage(
-                aligned_112, scalefactor=1.0 / 255.0, size=(112, 112),
-                mean=(0, 0, 0), swapRB=False, crop=False,
+                aligned_112,
+                scalefactor=1.0 / 127.5,
+                size=(112, 112),
+                mean=(127.5, 127.5, 127.5),
+                swapRB=False,
+                crop=False,
             )
             net.setInput(blob)
             logits = net.forward().flatten()
@@ -147,7 +154,7 @@ class FaceAnalyzer:
             # Temporal smoothing — exponential moving average.
             prev = self._emotion_history.get(history_key)
             if prev is not None and prev.shape == probs.shape:
-                probs = 0.6 * prev + 0.4 * probs
+                probs = 0.5 * prev + 0.5 * probs
             self._emotion_history[history_key] = probs
 
             idx = int(np.argmax(probs))
