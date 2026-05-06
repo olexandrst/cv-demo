@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CV Demo · Computer Vision</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="app">
+    <!-- ──────────────────────────────  STAGE  ────────────────────────────── -->
+    <main class="stage">
+      <header class="stage__header">
+        <div class="brand">
+          <span class="brand__dot"></span>
+          <span class="brand__name">CV<span class="brand__accent">.demo</span></span>
+        </div>
+        <div class="stage__meta">
+          <span id="modeLabel" class="chip chip--mode">Детекція людей</span>
+          <span id="fpsLabel" class="chip">— fps</span>
+          <span id="statusDot" class="chip chip--ok">● онлайн</span>
+        </div>
+      </header>
+
+      <div id="viewport" class="viewport">
+        <img id="video" class="viewport__video" src="/video_feed" alt="live" />
+        <canvas id="overlay" class="viewport__overlay"></canvas>
+
+        <!-- Zone drawing toolbar (visible only in zones mode) -->
+        <div id="zoneToolbar" class="zone-toolbar hidden">
+          <button id="zoneNew"   class="btn btn--ghost">+ нова зона</button>
+          <button id="zoneFinish" class="btn btn--ghost" disabled>завершити зону</button>
+          <button id="zoneUndo"  class="btn btn--ghost" disabled>↶ скасувати точку</button>
+          <button id="zoneClear" class="btn btn--danger">очистити все</button>
+          <span id="zoneHint" class="zone-hint">клік — додати точку, подвійний клік — завершити</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ──────────────────────────────  SIDEBAR  ────────────────────────────── -->
+    <aside class="panel">
+      <div class="panel__title">
+        <h1>Режими</h1>
+        <p>оберіть, що демонструвати</p>
+      </div>
+
+      <button class="mode-card is-active" data-mode="detection">
+        <div class="mode-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"/></svg>
+        </div>
+        <div class="mode-card__body">
+          <div class="mode-card__name">Детекція людей</div>
+          <div class="mode-card__desc">різнокольорові бокси для кожної людини</div>
+        </div>
+        <div class="mode-card__check"></div>
+      </button>
+
+      <button class="mode-card" data-mode="zones">
+        <div class="mode-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="M9 10l6 4M15 10l-6 4"/></svg>
+        </div>
+        <div class="mode-card__body">
+          <div class="mode-card__name">Зони інтересу</div>
+          <div class="mode-card__desc">детекція потрапляння у зону</div>
+        </div>
+        <div class="mode-card__check"></div>
+      </button>
+
+      <button class="mode-card" data-mode="ppe">
+        <div class="mode-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 16c0-4.4 3.6-8 8-8s8 3.6 8 8"/><path d="M3 16h18"/></svg>
+        </div>
+        <div class="mode-card__body">
+          <div class="mode-card__name">Засоби захисту</div>
+          <div class="mode-card__desc">детекція шолома на голові</div>
+        </div>
+        <div class="mode-card__check"></div>
+      </button>
+
+      <button class="mode-card" data-mode="profiling">
+        <div class="mode-card__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M8 15c1.3 1.3 2.5 2 4 2s2.7-.7 4-2"/></svg>
+        </div>
+        <div class="mode-card__body">
+          <div class="mode-card__name">Профілювання</div>
+          <div class="mode-card__desc">емоції та стать</div>
+        </div>
+        <div class="mode-card__check"></div>
+      </button>
+
+      <div class="panel__legend" id="legend">
+        <h2>Легенда</h2>
+        <div id="legendBody"></div>
+      </div>
+
+      <div class="panel__footer">
+        <span>v1.0 · CV demo</span>
+      </div>
+    </aside>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
