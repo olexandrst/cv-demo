@@ -24,8 +24,50 @@ from detector import Detector
 # ---------------------------------------------------------------------------
 # Webcam capture thread
 # ---------------------------------------------------------------------------
+def _auto_pick_camera_index(probe_max: int = 5) -> int:
+    """Probe video device indices and return the best one.
+
+    On Windows the integrated webcam is almost always at index 0; USB
+    cameras get 1, 2, … as they're plugged in. We probe 0..probe_max-1,
+    note which ones can open AND return a frame, and pick the highest
+    such index. This way a freshly-plugged USB camera is preferred over
+    the laptop's built-in webcam, but if nothing else is connected we
+    fall back to 0.
+    """
+    backend = cv2.CAP_DSHOW if hasattr(cv2, "CAP_DSHOW") else 0
+    working: list[int] = []
+    print("[camera] probing video device indices…", flush=True)
+    for idx in range(probe_max):
+        cap = cv2.VideoCapture(idx, backend)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        ok, frame = cap.read()
+        cap.release()
+        if ok and frame is not None and frame.size > 0:
+            working.append(idx)
+            print(f"[camera]   index {idx}: ok ({frame.shape[1]}×{frame.shape[0]})", flush=True)
+    if not working:
+        print("[camera]   no working camera found — falling back to index 0", flush=True)
+        return 0
+    chosen = max(working)
+    if len(working) == 1:
+        print(f"[camera] using index {chosen}", flush=True)
+    else:
+        others = ", ".join(str(i) for i in working if i != chosen)
+        print(f"[camera] using USB camera at index {chosen} (also saw: {others})", flush=True)
+    return chosen
+
+
 class CameraStream:
-    def __init__(self, src: int = 0, width: int = 1280, height: int = 720, mirror: bool = True) -> None:
+    def __init__(
+        self,
+        src: Optional[int] = None,
+        width: int = 1280,
+        height: int = 720,
+        mirror: bool = True,
+    ) -> None:
+        # src=None → auto-pick (prefers USB over built-in on Windows).
         self.src = src
         self.width = width
         self.height = height
@@ -37,6 +79,8 @@ class CameraStream:
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> "CameraStream":
+        if self.src is None:
+            self.src = _auto_pick_camera_index()
         self.cap = cv2.VideoCapture(self.src, cv2.CAP_DSHOW) if hasattr(cv2, "CAP_DSHOW") else cv2.VideoCapture(self.src)
         if not self.cap.isOpened():
             # fallback without DSHOW
@@ -79,7 +123,9 @@ app = Flask(__name__)
 import os as _os
 _cam_w = int(_os.environ.get("CV_CAM_WIDTH", "1280"))
 _cam_h = int(_os.environ.get("CV_CAM_HEIGHT", "720"))
-camera = CameraStream(src=0, width=_cam_w, height=_cam_h, mirror=True).start()
+_cam_idx_env = _os.environ.get("CV_CAM_INDEX")
+_cam_src: Optional[int] = int(_cam_idx_env) if _cam_idx_env not in (None, "") else None
+camera = CameraStream(src=_cam_src, width=_cam_w, height=_cam_h, mirror=True).start()
 detector = Detector()
 
 
