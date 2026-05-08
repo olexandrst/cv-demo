@@ -8,7 +8,7 @@
   const modeLabel   = document.getElementById('modeLabel');
   const fpsLabel    = document.getElementById('fpsLabel');
   const statusDot   = document.getElementById('statusDot');
-  const cards       = document.querySelectorAll('.mode-card');
+  const cards       = document.querySelectorAll('.mode-card[data-mode]');
   const zoneBar     = document.getElementById('zoneToolbar');
   const btnNew      = document.getElementById('zoneNew');
   const btnFinish   = document.getElementById('zoneFinish');

@@ -327,6 +327,39 @@ button { font-family: inherit; cursor: pointer; }
   transform: rotate(45deg);
 }
 
+/* external-link variant */
+.mode-card--link {
+  text-decoration: none;
+  grid-template-columns: 40px 1fr 22px;
+}
+.mode-card--link .mode-card__num {
+  background: var(--graphite);
+}
+.mode-card--link:hover {
+  border-color: rgba(228, 0, 58, 0.45);
+  background: linear-gradient(180deg, rgba(228,0,58,0.05), rgba(228,0,58,0.015));
+}
+.mode-card--link:hover .mode-card__num {
+  background: var(--red);
+  box-shadow: 0 4px 14px rgba(228, 0, 58, 0.35);
+}
+.mode-card__ext {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  color: var(--graphite-dim);
+  transition: color .15s ease, transform .15s ease;
+}
+.mode-card__ext svg {
+  width: 16px; height: 16px;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.mode-card--link:hover .mode-card__ext {
+  color: var(--red);
+  transform: translate(2px, -2px);
+}
+
 /* legend */
 .panel__legend {
   margin-top: 6px;
