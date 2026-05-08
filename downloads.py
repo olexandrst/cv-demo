@@ -35,11 +35,12 @@ URLS: dict[str, str] = {
         "https://github.com/opencv/opencv_zoo/raw/main/models/"
         "face_detection_yunet/face_detection_yunet_2023mar.onnx"
     ),
-    # Better-than-FER+ emotion classifier (7 classes, ~13 MB).
-    "emotion_mobilefacenet.onnx": (
-        "https://github.com/opencv/opencv_zoo/raw/main/models/"
-        "facial_expression_recognition_mobilefacenet/"
-        "facial_expression_recognition_mobilefacenet_2022july.onnx"
+    # FER+ emotion classifier (8 classes, ~35 MB). Less accurate than
+    # mobilefacenet on paper but doesn't collapse to "neutral" on every
+    # face — combined with our anti-neutral threshold it actually works.
+    "emotion-ferplus-8.onnx": (
+        "https://github.com/onnx/models/raw/main/validated/vision/"
+        "body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx"
     ),
     # Levi-Hassner gender model. spmallick/learnopencv only ships a
     # downloader script that pulls from Dropbox; smahesh29/Gender-and-Age-Detection
@@ -68,7 +69,7 @@ _MIN_SIZE = {
     "yolov8n.pt":                     5_000_000,
     "yolov8n-hardhat.pt":             5_000_000,
     "yunet.onnx":                       100_000,
-    "emotion_mobilefacenet.onnx":     5_000_000,
+    "emotion-ferplus-8.onnx":        30_000_000,
     "gender_deploy.prototxt":             1_000,
     "gender_net.caffemodel":         40_000_000,
     "age_deploy.prototxt":                1_000,

@@ -4,11 +4,14 @@ Used by the profiling mode.
 
 Pipeline:
   1. Face detection — OpenCV YuNet (~230 KB ONNX). Gives bbox + 5 landmarks.
-  2. Emotion       — opencv_zoo `facial_expression_recognition_mobilefacenet`
-                     (~13 MB ONNX). 7 classes: angry, disgust, fear, happy,
-                     neutral, sad, surprise. Run on a 5-landmark-aligned
-                     112×112 face crop; predictions are smoothed across
-                     consecutive runs to suppress jitter.
+  2. Emotion       — FER+ (8 classes), ONNX, ~35 MB. We apply an
+                     "anti-neutral" threshold to fight the model's
+                     well-known bias toward labelling everything neutral —
+                     if neutral isn't dominant (default <55%), the best
+                     non-neutral class wins. This dramatically improves
+                     responsiveness on a conference-stand setup where
+                     visitors make exaggerated faces and want immediate
+                     feedback.
   3. Gender        — Levi-Hassner Caffe model (~45 MB).
   4. Age           — Levi-Hassner Caffe model, 8 age buckets (~45 MB).
 
@@ -30,23 +33,34 @@ import numpy as np
 
 from downloads import fetch as _fetch_model
 
-# Set EMOTION_DEBUG=1 to print top-3 emotion probabilities + dump aligned
-# face crops to ./debug/aligned_*.jpg for visual inspection.
+# Set EMOTION_DEBUG=1 to print top-3 emotion probabilities + dump face crops
+# to ./debug/face_*.jpg for visual inspection.
 _EMOTION_DEBUG = os.environ.get("EMOTION_DEBUG", "0") not in ("", "0", "false", "False")
 _DEBUG_DIR = Path(__file__).resolve().parent / "debug"
 
-# Class order for facial_expression_recognition_mobilefacenet_2022july.onnx
-_EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+# Threshold: neutral wins only if its probability is at least this.
+# Otherwise the best non-neutral class wins. 0.55 is a reasonable demo
+# default — visitors making faces get instant feedback even when the
+# model is uncertain. Tunable via env.
+_NEUTRAL_THRESHOLD = float(os.environ.get("EMOTION_NEUTRAL_THRESHOLD", "0.55"))
 
-# 5-landmark template the alignment maps to (positions on a 112×112 canvas).
-# Same landmark order as YuNet returns: right-eye, left-eye, nose, mouth-right, mouth-left.
-_FACE_TEMPLATE_112 = np.array([
-    [38.2946, 51.6963],   # right eye
-    [73.5318, 51.5014],   # left eye
-    [56.0252, 71.7366],   # nose tip
-    [41.5493, 92.3655],   # right mouth corner
-    [70.7299, 92.2041],   # left mouth corner
-], dtype=np.float32)
+# FER+ class order (from the onnx/models card).
+_FERPLUS_LABELS = [
+    "neutral", "happiness", "surprise", "sadness",
+    "anger", "disgust", "fear", "contempt",
+]
+_NEUTRAL_IDX = 0
+# Map FER+ classes -> the short keys detector.py paints colours for.
+_EMOTION_KEY = {
+    "neutral":   "neutral",
+    "happiness": "happy",
+    "surprise":  "surprise",
+    "sadness":   "sad",
+    "anger":     "angry",
+    "disgust":   "disgust",
+    "fear":      "fear",
+    "contempt":  "angry",   # fold contempt into angry for the UI
+}
 
 # Levi-Hassner mean values (BGR, 227×227 input).
 _LH_MEAN = (78.4263377603, 87.7689143744, 114.895847746)
@@ -63,14 +77,12 @@ class FaceAnalyzer:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._face_detector = None
-        self._emotion_net = None      # cv2.dnn.Net (ONNX)
+        self._emotion_net = None      # cv2.dnn.Net (FER+ ONNX)
         self._gender_net = None       # cv2.dnn.Net (Caffe)
         self._age_net = None          # cv2.dnn.Net (Caffe)
         self._cached_size = (0, 0)
-        # Per-face running average of emotion logits.
-        # Keys: rounded face center; values: (logits_avg, last_seen_frame).
+        # Per-face running average of emotion logits (key = rounded face centre).
         self._emotion_history: dict[tuple[int, int], np.ndarray] = {}
-        self._frame_idx = 0
 
     # ------------------------------------------------------------- loaders
     def _ensure_face(self):
@@ -89,7 +101,7 @@ class FaceAnalyzer:
             return self._emotion_net
         with self._lock:
             if self._emotion_net is None:
-                p = _fetch_model("emotion_mobilefacenet.onnx")
+                p = _fetch_model("emotion-ferplus-8.onnx")
                 self._emotion_net = cv2.dnn.readNet(str(p))
         return self._emotion_net
 
@@ -115,69 +127,51 @@ class FaceAnalyzer:
 
     # ------------------------------------------------------------- helpers
     @staticmethod
-    def _align_face(frame_bgr: np.ndarray, landmarks: np.ndarray) -> Optional[np.ndarray]:
-        """Affine-warp face to a 112×112 canvas using 5 landmarks."""
-        try:
-            # estimateAffinePartial2D needs at least 3 points.
-            M, _ = cv2.estimateAffinePartial2D(
-                landmarks.astype(np.float32),
-                _FACE_TEMPLATE_112,
-            )
-            if M is None:
-                return None
-            return cv2.warpAffine(
-                frame_bgr, M, (112, 112), flags=cv2.INTER_LINEAR,
-                borderValue=(0, 0, 0),
-            )
-        except cv2.error:
-            return None
-
-    @staticmethod
     def _softmax(x: np.ndarray) -> np.ndarray:
         x = x - np.max(x)
         ex = np.exp(x)
         return ex / np.sum(ex)
 
     # ------------------------------------------------------------- inference
-    def _predict_emotion(self, aligned_112: np.ndarray, history_key: tuple[int, int]) -> str:
+    def _predict_emotion(self, face_bgr: np.ndarray, history_key: tuple[int, int]) -> str:
         try:
             net = self._ensure_emotion()
-            # Mirror opencv_zoo's demo exactly:
-            #   blob = blobFromImage(img, 1.0, (112,112), [0,0,0])
-            #   blob = blob / 255.0
-            #   blob = (blob - 0.5) / 0.5
-            # We keep the multiply-by-mean-then-scale form in a single
-            # blobFromImage call to avoid any float32→float64 upcasts.
-            # mobilefacenet was trained in PyTorch on RGB images normalised
-            # to [-1, 1]. We feed it BGR-from-OpenCV and tell blobFromImage
-            # to swap to RGB.
-            blob = cv2.dnn.blobFromImage(
-                aligned_112, 1.0, (112, 112), [0, 0, 0],
-                swapRB=True, crop=False,
-            )
-            blob = (blob / 255.0 - 0.5) / 0.5
-            blob = blob.astype(np.float32)
-            net.setInput(blob)
+            # FER+ takes a single-channel 64×64 image, pixel range [0, 255]
+            # as float32. No further normalisation.
+            gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+            gray = cv2.equalizeHist(gray)  # boost contrast — helps on dim webcam frames
+            gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_AREA)
+            x = gray.astype(np.float32).reshape(1, 1, 64, 64)
+            net.setInput(x)
             logits = net.forward().flatten()
             probs = self._softmax(logits)
 
-            # Verbose debug — set EMOTION_DEBUG=0 in env to silence.
-            if _EMOTION_DEBUG:
-                top3 = np.argsort(probs)[::-1][:3]
-                msg = "  ".join(
-                    f"{_EMOTION_LABELS[i]}={probs[i]:.2f}" for i in top3
-                )
-                print(f"[emotion@{history_key}] {msg}", flush=True)
-
-            # Light EMA — bias toward the latest reading so the demo feels
-            # responsive when a visitor changes expression.
+            # Temporal smoothing — exponential moving average. Bias toward
+            # the latest reading so the demo feels responsive.
             prev = self._emotion_history.get(history_key)
             if prev is not None and prev.shape == probs.shape:
                 probs = 0.3 * prev + 0.7 * probs
             self._emotion_history[history_key] = probs
 
-            idx = int(np.argmax(probs))
-            return _EMOTION_LABELS[idx]
+            # Anti-neutral threshold: only call it neutral if neutral
+            # *clearly* dominates. Otherwise pick the best non-neutral class.
+            if probs[_NEUTRAL_IDX] >= _NEUTRAL_THRESHOLD:
+                idx = _NEUTRAL_IDX
+            else:
+                non_neutral = probs.copy()
+                non_neutral[_NEUTRAL_IDX] = -1.0
+                idx = int(np.argmax(non_neutral))
+
+            if _EMOTION_DEBUG:
+                top3 = np.argsort(probs)[::-1][:3]
+                msg = "  ".join(
+                    f"{_FERPLUS_LABELS[i]}={probs[i]:.2f}" for i in top3
+                )
+                chosen = _FERPLUS_LABELS[idx]
+                print(f"[emotion@{history_key}] {msg}  →  {chosen}", flush=True)
+
+            label = _FERPLUS_LABELS[idx]
+            return _EMOTION_KEY.get(label, "neutral")
         except Exception as exc:
             if _EMOTION_DEBUG:
                 print(f"[emotion] error: {exc}", flush=True)
@@ -224,7 +218,6 @@ class FaceAnalyzer:
         if faces is None:
             return results
 
-        self._frame_idx += 1
         seen_keys: set[tuple[int, int]] = set()
 
         for f in faces:
@@ -232,28 +225,21 @@ class FaceAnalyzer:
             if fw < 24 or fh < 24:
                 continue
 
-            # Padded crop for gender/age (Levi-Hassner was trained on padded faces).
-            pad = int(0.20 * max(fw, fh))
-            cx1 = max(0, x - pad); cy1 = max(0, y - pad)
-            cx2 = min(w, x + fw + pad); cy2 = min(h, y + fh + pad)
-            padded = frame_bgr[cy1:cy2, cx1:cx2]
+            # Padded crop — gender/age (Levi-Hassner) was trained on padded faces,
+            # FER+ benefits from a tighter crop. Compute both.
+            pad_lh = int(0.20 * max(fw, fh))
+            lx1 = max(0, x - pad_lh); ly1 = max(0, y - pad_lh)
+            lx2 = min(w, x + fw + pad_lh); ly2 = min(h, y + fh + pad_lh)
+            padded = frame_bgr[ly1:ly2, lx1:lx2]
             if padded.size == 0:
                 continue
 
-            # Aligned 112x112 crop for emotion (uses YuNet's 5 landmarks).
-            try:
-                lms = np.array([
-                    [f[4],  f[5]],   # right eye
-                    [f[6],  f[7]],   # left eye
-                    [f[8],  f[9]],   # nose tip
-                    [f[10], f[11]],  # right mouth corner
-                    [f[12], f[13]],  # left mouth corner
-                ], dtype=np.float32)
-                aligned = self._align_face(frame_bgr, lms)
-            except Exception:
-                aligned = None
-            if aligned is None or aligned.size == 0:
-                aligned = cv2.resize(padded, (112, 112), interpolation=cv2.INTER_AREA)
+            pad_em = int(0.05 * max(fw, fh))
+            ex1 = max(0, x - pad_em); ey1 = max(0, y - pad_em)
+            ex2 = min(w, x + fw + pad_em); ey2 = min(h, y + fh + pad_em)
+            em_crop = frame_bgr[ey1:ey2, ex1:ex2]
+            if em_crop.size == 0:
+                em_crop = padded
 
             # Use coarse face center as identity key for temporal smoothing.
             cx = (x + fw // 2) // 32 * 32
@@ -264,11 +250,11 @@ class FaceAnalyzer:
             if _EMOTION_DEBUG:
                 _DEBUG_DIR.mkdir(exist_ok=True)
                 tag = f"{key[0]:04d}_{key[1]:04d}"
-                cv2.imwrite(str(_DEBUG_DIR / f"aligned_{tag}.jpg"), aligned)
+                cv2.imwrite(str(_DEBUG_DIR / f"face_{tag}.jpg"), em_crop)
 
             results.append({
                 "region": {"x": int(x), "y": int(y), "w": int(fw), "h": int(fh)},
-                "dominant_emotion": self._predict_emotion(aligned, key),
+                "dominant_emotion": self._predict_emotion(em_crop, key),
                 "dominant_gender":  self._predict_gender(padded),
                 "dominant_age":     self._predict_age(padded),
             })

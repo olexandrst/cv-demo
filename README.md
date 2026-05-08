@@ -14,7 +14,7 @@
 ## Стек
 
 - **Python + Flask** — сервер, MJPEG-стрім, REST для перемикання режимів.
-- **OpenCV** — захоплення з вебкамери, YuNet face detection, MobileFaceNet emotion (ONNX), Levi-Hassner gender + age (Caffe). Все через `cv2.dnn`, без TensorFlow.
+- **OpenCV** — захоплення з вебкамери, YuNet face detection, FER+ emotion (ONNX), Levi-Hassner gender + age (Caffe). Все через `cv2.dnn`, без TensorFlow.
 - **Ultralytics YOLOv8 (nano)** — детекція людей.
 - **`keremberke/yolov8n-hard-hat-detection`** (HuggingFace) — детекція шолома.
 - **HTML5 + JS** — інтерфейс із canvas-overlay для малювання зон.
@@ -128,7 +128,7 @@ http://localhost:5000
 | `yolov8n.pt` | ~6 МБ | https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.pt |
 | `yolov8n-hardhat.pt` | ~6 МБ | https://huggingface.co/keremberke/yolov8n-hard-hat-detection/resolve/main/best.pt |
 | `yunet.onnx` | ~230 КБ | https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx |
-| `emotion_mobilefacenet.onnx` | ~13 МБ | https://github.com/opencv/opencv_zoo/raw/main/models/facial_expression_recognition_mobilefacenet/facial_expression_recognition_mobilefacenet_2022july.onnx |
+| `emotion-ferplus-8.onnx` | ~35 МБ | https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx |
 | `gender_deploy.prototxt` | ~3 КБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_deploy.prototxt |
 | `gender_net.caffemodel` | ~45 МБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/gender_net.caffemodel |
 | `age_deploy.prototxt` | ~3 КБ | https://github.com/smahesh29/Gender-and-Age-Detection/raw/master/age_deploy.prototxt |
@@ -174,7 +174,8 @@ cv-demo/
 | Змінна | Стандарт | Що робить |
 |---|---|---|
 | `YOLO_IMGSZ` | `384` | Вхідне розширення YOLO. Менше = швидше. `320` ~+30% FPS, `256` ще швидше але починає пропускати малі обличчя/людей. |
-| `EMOTION_DEBUG` | `0` | `1` друкує топ-3 ймовірностей емоцій + зберігає aligned-кропи у `./debug/`. |
+| `EMOTION_DEBUG` | `0` | `1` друкує топ-3 ймовірностей емоцій + зберігає кропи облич у `./debug/`. |
+| `EMOTION_NEUTRAL_THRESHOLD` | `0.55` | Ймовірність "neutral", нижче якої ми пропускаємо її і беремо найкращу з решти класів. Знизити до `0.45` для ще більш динамічної реакції; підняти до `0.7` якщо модель надто часто скаче на не-нейтральні емоції. |
 | `CV_CAM_WIDTH` | `1280` | Ширина захоплення з камери (не впливає на інференс — модель має свій `imgsz`). |
 | `CV_CAM_HEIGHT` | `720` | Висота захоплення. Можна знизити до 960×540 щоб трохи прискорити JPEG-енкод. |
 
@@ -205,19 +206,23 @@ cv-demo/
 
 ## Налагодження детекції емоцій
 
-Якщо в режимі **Профілювання** настрій постійно показується як "нормальний" незалежно від того, що ви робите перед камерою — увімкніть детальне логування:
+Емоції тримаються на FER+ — найдоступнішому ONNX-класифікаторі, але він має сильний bias на "neutral". Тому ми застосовуємо anti-neutral threshold (`EMOTION_NEUTRAL_THRESHOLD`, дефолт 0.55): якщо ймовірність neutral нижче порогу — береться найкраща з решти емоцій. На демо-стенді це дає дуже живу реакцію навіть на слабкі вирази.
+
+Якщо щось не так:
 
 ```powershell
 $env:EMOTION_DEBUG = "1"
 python app.py
 ```
 
-У консолі побачите щось на кшталт:
+У консолі побачите кожні ~0.4 с топ-3 ймовірностей з вибраним класом:
 ```
-[emotion@(640,360)] happy=0.71  neutral=0.18  surprise=0.06
+[emotion@(640,360)] neutral=0.42  happiness=0.31  sadness=0.11  →  happiness
 ```
 
-— це топ-3 ймовірності класів. Якщо `happy` справді найвищий при усмішці — все працює, просто EMA згладжує. Якщо ні — модель не розпізнає (поганий ракурс/освітлення/розмір обличчя). Тоді в `./debug/aligned_*.jpg` можна подивитись, на який вирівняний кроп дивиться модель.
+— тут `neutral` був топ, але нижче 0.55, тому переможець `happiness`. У `./debug/face_*.jpg` зберігаються кропи облич, які йдуть у модель.
+
+Якщо хочете повернути "класичну" поведінку без зсуву (тільки argmax), поставте `$env:EMOTION_NEUTRAL_THRESHOLD = "0"`.
 
 ## Поради для стенду
 
